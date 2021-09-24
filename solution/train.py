@@ -1,12 +1,15 @@
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
+from catboost import CatBoostRegressor, Pool
 import xgboost as xgb
 import lightgbm as lgb
 from sklearn.feature_selection import SelectKBest
 from sklearn.decomposition import PCA
-from sklearn.model_selection import train_test_split, fKFold
+from sklearn.model_selection import train_test_split, KFold
 from sklearn import ensemble
+import scipy
+from pandas.api.types import is_object_dtype
+from metrics import metrics_stat
 
 
 def data_read(file, sep=None):
@@ -14,21 +17,29 @@ def data_read(file, sep=None):
     return data
 
 def check_data_info(data):
-    nans = data.isnull().values.any()
     descr = data.describe()
-    return nans, descr
+    info = data.info()
+    return descr, info
 
-def features_label(data):
-    features = data[0:-1]
-    label = data[-1]
+def fill_nans(data):
+    for col in data.columns:
+        if data[col].isnull().values.any() == True:
+            if data[col].dtype == 'float64':
+                data[col].fillna(data[col].mean(), inplace=True)
+            else:
+                data[col].fillna(data[col].mode()[0], inplace=True)
+        else:
+            pass
+    return data
+
+def features_label(data, label):
+    features = data.drop(label,  axis=1)
+    label = data[label]
     return features, label
 
-def train_test(features, label, test=None):
-    if test:
-        pass
-    else:
-        X_train, X_test, y_train, y_test = train_test_split(
-            features, label, test_size=0.33, random_state=42)
+def train_test(features, label):
+    X_train, X_test, y_train, y_test = train_test_split(
+        features, label, test_size=0.33, random_state=42)
     return X_train, X_test, y_train, y_test
 
 def kfold_cv(data, k=2):
@@ -42,13 +53,26 @@ def kfold_cv(data, k=2):
     return val_scores
 
 
-params = {'n_estimators': 1200, 'max_depth': 3, 'subsample': 0.5,
-          'learning_rate': 0.01, 'random_state': 3}
+train = data_read("data/train.csv")
+test = data_read("data/test.csv")
 
-reg_ensemble = ensemble.GradientBoostingRegressor(**params)
 
-clf.fit(X_train, y_train)
+train = fill_nans(train)
 
-acc = clf.score(X_test, y_test)
+train = train.drop(["street","floor", "id", "city", "date", "osm_city_nearest_name","region"], axis=1)
 
-print("Accuracy: {:.4f}".format(acc))
+test = test.drop(["street","floor", "id", "city", "date", "osm_city_nearest_name","region"], axis=1)
+
+features, label = features_label(train, 'per_square_meter_price')
+X_train, X_test, y_train, y_test = train_test(features, label)
+
+params = {'n_estimators': 3000, 'learning_rate': 0.001, 'random_state': 3, 'verbose':250}
+model = CatBoostRegressor(**params)
+model.fit(features, label)
+
+prediction = model.predict(test)
+
+
+solution = test_1[['id']].copy()
+solution['per_square_meter_price'] = pd.Series(np.full(len(test_1), prediction))
+solution.to_csv('first.csv', sep=',', index=False)
